@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebRTC Meeting</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/3.0.1/socket.io.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin: 0;
+        }
+        video {
+            width: 45%;
+            margin: 10px;
+            border: 2px solid black;
+        }
+        #meetingControls {
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <h1>WebRTC Meeting</h1>
+    <div id="meetingControls">
+        <input type="text" id="roomInput" placeholder="Enter room code" />
+        <button id="createRoomButton">Create Meeting</button>
+        <button id="joinRoomButton">Join Meeting</button>
+    </div>
+    <video id="localVideo" autoplay playsinline></video>
+    <video id="remoteVideo" autoplay playsinline></video>
+
+    <script>
+        const socket = io();
+        let localStream;
+        let peerConnection;
+        const localVideo = document.getElementById('localVideo');
+        const remoteVideo = document.getElementById('remoteVideo');
+        const roomInput = document.getElementById('roomInput');
+        const createRoomButton = document.getElementById('createRoomButton');
+        const joinRoomButton = document.getElementById('joinRoomButton');
+
+        const peerConnectionConfig = {
+            iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+        };
+
+        async function startLocalStream() {
+            localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+            localVideo.srcObject = localStream;
+        }
+
+        startLocalStream();
+
+        createRoomButton.onclick = () => {
+            const roomId = Math.random().toString(36).substring(2, 8);
+            roomInput.value = roomId;
+            setupRoom(roomId);
+        };
+
+        joinRoomButton.onclick = () => {
+            const roomId = roomInput.value;
+            setupRoom(roomId);
+        };
+
+        function setupRoom(roomId) {
+            createPeerConnection();
+            socket.emit("signal", { type: "join", roomId });
+
+            socket.on("signal", (data) => {
+                if (data.type === "offer") {
+                    handleOffer(data.offer);
+                } else if (data.type === "answer") {
+                    handleAnswer(data.answer);
+                } else if (data.type === "candidate") {
+                    handleCandidate(data.candidate);
+                }
+            });
+        }
+
+        function handleOffer(offer) {
+            peerConnection.setRemoteDescription(new RTCSessionDescription(offer)).then(() => {
+                return peerConnection.createAnswer();
+            }).then(answer => {
+                return peerConnection.setLocalDescription(answer);
+            }).then(() => {
+                socket.emit("signal", { type: "answer", answer: peerConnection.localDescription });
+            });
+        }
+
+        function handleAnswer(answer) {
+            peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+        }
+
+        function handleCandidate(candidate) {
+            peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+        }
+
+        function createPeerConnection() {
+            peerConnection = new RTCPeerConnection(peerConnectionConfig);
+            localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+
+            peerConnection.onicecandidate = function(event) {
+                if (event.candidate) {
+                    socket.emit("signal", { type: "candidate", candidate: event.candidate });
+                }
+            };
+
+            peerConnection.ontrack = function(event) {
+                remoteVideo.srcObject = event.streams[0];
+            };
+        }
+    </script>
+</body>
+</html>
